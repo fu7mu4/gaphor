@@ -20,15 +20,16 @@ log = logging.getLogger(__name__)
 
 class Toolbox(UIComponent, ActionProvider):
 
-    TARGET_STRING = 0
-    TARGET_TOOLBOX_ACTION = 1
-    DND_TARGETS = [
-        Gtk.TargetEntry.new("STRING", Gtk.TargetFlags.SAME_APP, TARGET_STRING),
-        Gtk.TargetEntry.new("text/plain", Gtk.TargetFlags.SAME_APP, TARGET_STRING),
-        Gtk.TargetEntry.new(
-            "gaphor/toolbox-action", Gtk.TargetFlags.SAME_APP, TARGET_TOOLBOX_ACTION
-        ),
-    ]
+    if Gtk.get_major_version() == 3:
+        TARGET_STRING = 0
+        TARGET_TOOLBOX_ACTION = 1
+        DND_TARGETS = [
+            Gtk.TargetEntry.new("STRING", Gtk.TargetFlags.SAME_APP, TARGET_STRING),
+            Gtk.TargetEntry.new("text/plain", Gtk.TargetFlags.SAME_APP, TARGET_STRING),
+            Gtk.TargetEntry.new(
+                "gaphor/toolbox-action", Gtk.TargetFlags.SAME_APP, TARGET_TOOLBOX_ACTION
+            ),
+        ]
 
     title = gettext("Toolbox")
 
@@ -50,7 +51,10 @@ class Toolbox(UIComponent, ActionProvider):
 
     def close(self):
         if self._toolbox:
-            self._toolbox.destroy()
+            if Gtk.get_major_version() == 3:
+                self._toolbox.destroy()
+            elif self._toolbox_container:
+                self._toolbox_container.unparent()
             self._toolbox = None
         self.event_manager.unsubscribe(self._on_modeling_language_changed)
 
@@ -68,28 +72,38 @@ class Toolbox(UIComponent, ActionProvider):
         Returns: The Gtk.ToggleToolButton.
         """
         button = Gtk.ToggleButton.new()
-        icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
-        button.add(icon)
+        if Gtk.get_major_version() == 3:
+            icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
+            button.add(icon)
+        else:
+            icon = Gtk.Image.new_from_icon_name(icon_name)
+            button.set_child(icon)
         button.set_action_name("diagram.select-tool")
         button.set_action_target_value(GLib.Variant.new_string(action_name))
         button.get_style_context().add_class("flat")
         if label:
             if shortcut:
-                a, m = Gtk.accelerator_parse(shortcut)
+                if Gtk.get_major_version() == 3:
+                    a, m = Gtk.accelerator_parse(shortcut)
+                else:
+                    _, a, m = Gtk.accelerator_parse(shortcut)
                 button.set_tooltip_text(f"{label} ({Gtk.accelerator_get_label(a, m)})")
             else:
                 button.set_tooltip_text(f"{label}")
 
         # Enable Drag and Drop
         if action_name != "toolbox-pointer":
-            button.drag_source_set(
-                Gdk.ModifierType.BUTTON1_MASK | Gdk.ModifierType.BUTTON3_MASK,
-                self.DND_TARGETS,
-                Gdk.DragAction.COPY | Gdk.DragAction.LINK,
-            )
-            button.drag_source_set_icon_name(icon_name)
-            button.connect("drag-data-get", self._button_drag_data_get, action_name)
-
+            if Gtk.get_major_version() == 3:
+                button.drag_source_set(
+                    Gdk.ModifierType.BUTTON1_MASK | Gdk.ModifierType.BUTTON3_MASK,
+                    self.DND_TARGETS,
+                    Gdk.DragAction.COPY | Gdk.DragAction.LINK,
+                )
+                button.drag_source_set_icon_name(icon_name)
+                button.connect("drag-data-get", _button_drag_data_get, action_name)
+            else:
+                # TODO: Gtk4 - use controllers DragSource and DropTarget
+                pass
         return button
 
     def create_toolbox(
@@ -111,24 +125,32 @@ class Toolbox(UIComponent, ActionProvider):
             flowbox = Gtk.FlowBox.new()
             flowbox.set_homogeneous(True)
             flowbox.set_max_children_per_line(12)
-            expander.add(flowbox)
+            if Gtk.get_major_version() == 3:
+                expander.add(flowbox)
+            else:
+                expander.set_child(flowbox)
             for action_name, label, icon_name, shortcut, *rest in items:
                 button = self.create_toolbox_button(
                     action_name, icon_name, label, shortcut
                 )
                 flowbox.insert(button, -1)
-                button.show_all()
 
-            toolbox.add(expander)
-            expander.show()
+            if Gtk.get_major_version() == 3:
+                toolbox.add(expander)
+            else:
+                toolbox.append(expander)
 
-        toolbox.show()
+        if Gtk.get_major_version() == 3:
+            toolbox.show_all()
         return toolbox
 
     def create_toolbox_container(self, toolbox: Gtk.Widget) -> Gtk.ScrolledWindow:
         toolbox_container = Gtk.ScrolledWindow()
         toolbox_container.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        toolbox_container.add(toolbox)
+        if Gtk.get_major_version() == 3:
+            toolbox_container.add(toolbox)
+        else:
+            toolbox_container.set_child(toolbox)
         toolbox_container.show()
         return toolbox_container
 
@@ -141,12 +163,18 @@ class Toolbox(UIComponent, ActionProvider):
         """
         toolbox = self.create_toolbox(self.modeling_language.toolbox_definition)
         if self._toolbox_container:
-            self._toolbox_container.remove(self._toolbox_container.get_child())
-            self._toolbox_container.add(toolbox)
+            if Gtk.get_major_version() == 3:
+                self._toolbox_container.remove(self._toolbox_container.get_child())
+                self._toolbox_container.add(toolbox)
+            else:
+                self._toolbox_container.set_child(toolbox)
         self._toolbox = toolbox
 
     def _on_toolbox_destroyed(self, widget):
         self._toolbox = None
+
+
+if Gtk.get_major_version() == 3:
 
     def _button_drag_data_get(self, button, context, data, info, time, action_name):
         """The drag-data-get event signal handler.

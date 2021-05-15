@@ -2,7 +2,10 @@ import pytest
 from gi.repository import Gtk
 
 from gaphor import UML
+from gaphor.C4Model.toolbox import c4model_toolbox_actions
 from gaphor.diagram.diagramtools.placement import PlacementState, on_drag_begin
+from gaphor.RAAML.toolbox import raaml_toolbox_actions
+from gaphor.SysML.toolbox import sysml_toolbox_actions
 from gaphor.ui.diagrampage import DiagramPage
 from gaphor.UML.modelinglanguage import UMLModelingLanguage
 from gaphor.UML.toolbox import uml_toolbox_actions
@@ -20,8 +23,13 @@ def tab(event_manager, element_factory, properties):
         diagram, event_manager, element_factory, properties, UMLModelingLanguage()
     )
 
-    window = Gtk.Window.new(Gtk.WindowType.TOPLEVEL)
-    window.add(tab.construct())
+    if Gtk.get_major_version() == 3:
+        window = Gtk.Window.new(Gtk.WindowType.TOPLEVEL)
+        window.add(tab.construct())
+    else:
+        window = Gtk.Window.new()
+        window.set_child(tab.construct())
+
     window.show()
     yield tab
     window.destroy()
@@ -74,7 +82,11 @@ def test_pointer(tab):
 )
 def test_placement_action(tab, tool_name, event_manager):
     tool_def = tab.get_tool_def(tool_name)
-    tool = Gtk.GestureDrag.new(tab.view)
+    if Gtk.get_major_version() == 3:
+        tool = Gtk.GestureDrag.new(tab.view)
+    else:
+        tool = Gtk.GestureDrag.new()
+        tab.view.add_controller(tool)
     placement_state = PlacementState(
         tool_def.item_factory, event_manager, tool_def.handle_index
     )
@@ -93,11 +105,20 @@ def test_placement_partition(tab, element_factory, event_manager):
     assert len(element_factory.lselect(UML.ActivityPartition)) == 2
 
 
-def test_uml_toolbox_actions_shortcut_unique():
+@pytest.mark.parametrize(
+    "toolbox_actions",
+    [
+        uml_toolbox_actions,
+        sysml_toolbox_actions,
+        raaml_toolbox_actions,
+        c4model_toolbox_actions,
+    ],
+)
+def test_uml_toolbox_actions_shortcut_unique(toolbox_actions):
 
     shortcuts = {}
 
-    for category, items in uml_toolbox_actions:
+    for category, items in toolbox_actions:
         for action_name, label, icon_name, shortcut, *rest in items:
             try:
                 shortcuts[shortcut].append(action_name)

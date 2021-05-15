@@ -1,6 +1,6 @@
 import logging
 
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from gaphor import UML
 from gaphor.core import gettext, transactional
@@ -13,11 +13,12 @@ from gaphor.diagram.propertypages import (
     PropertyPages,
     new_resource_builder,
     on_bool_cell_edited,
-    on_keypress_event,
     on_text_cell_edited,
 )
 from gaphor.UML.classes.association import AssociationItem
+from gaphor.UML.classes.datatype import DataTypeItem
 from gaphor.UML.classes.dependency import DependencyItem
+from gaphor.UML.classes.enumeration import EnumerationItem
 from gaphor.UML.classes.interface import Folded, InterfaceItem
 from gaphor.UML.classes.klass import ClassItem
 from gaphor.UML.components.connector import ConnectorItem
@@ -29,21 +30,41 @@ log = logging.getLogger(__name__)
 new_builder = new_resource_builder("gaphor.UML.classes")
 
 
+@transactional
+def on_keypress_event(ctrl, keyval, keycode, state, tree):
+    k = Gdk.keyval_name(keyval).lower()
+    if k in ("backspace", "delete"):
+        model, iter = tree.get_selection().get_selected()
+        if iter:
+            model.remove(iter)
+    elif k in ("equal", "plus"):
+        model, iter = tree.get_selection().get_selected()
+        model.swap(iter, model.iter_next(iter))
+        return True
+    elif k in ("minus", "underscore"):
+        model, iter = tree.get_selection().get_selected()
+        model.swap(iter, model.iter_previous(iter))
+        return True
+
+
 class ClassAttributes(EditableTreeModel):
     """GTK tree model to edit class attributes."""
 
-    def _get_rows(self):
+    def __init__(self, item):
+        super().__init__(item, cols=(str, bool, object))
+
+    def get_rows(self):
         for attr in self._item.subject.ownedAttribute:
             if not attr.association:
                 yield [format(attr), attr.isStatic, attr]
 
-    def _create_object(self):
+    def create_object(self):
         attr = self._item.model.create(UML.Property)
         self._item.subject.ownedAttribute = attr
         return attr
 
     @transactional
-    def _set_object_value(self, row, col, value):
+    def set_object_value(self, row, col, value):
         attr = row[-1]
         if col == 0:
             parse(attr, value)
@@ -56,14 +77,20 @@ class ClassAttributes(EditableTreeModel):
             row[0] = format(attr)
             row[1] = attr.isStatic
 
-    def _swap_objects(self, o1, o2):
+    def swap_objects(self, o1, o2):
         return self._item.subject.ownedAttribute.swap(o1, o2)
+
+    def sync_model(self, new_order):
+        self._item.subject.ownedAttribute.order(new_order.index)
 
 
 class ClassOperations(EditableTreeModel):
     """GTK tree model to edit class operations."""
 
-    def _get_rows(self):
+    def __init__(self, item):
+        super().__init__(item, cols=(str, bool, bool, object))
+
+    def get_rows(self):
         for operation in self._item.subject.ownedOperation:
             yield [
                 format(operation),
@@ -72,13 +99,13 @@ class ClassOperations(EditableTreeModel):
                 operation,
             ]
 
-    def _create_object(self):
+    def create_object(self):
         operation = self._item.model.create(UML.Operation)
         self._item.subject.ownedOperation = operation
         return operation
 
     @transactional
-    def _set_object_value(self, row, col, value):
+    def set_object_value(self, row, col, value):
         operation = row[-1]
         if col == 0:
             parse(operation, value)
@@ -94,8 +121,60 @@ class ClassOperations(EditableTreeModel):
             row[1] = operation.isAbstract
             row[2] = operation.isStatic
 
-    def _swap_objects(self, o1, o2):
+    def swap_objects(self, o1, o2):
         return self._item.subject.ownedOperation.swap(o1, o2)
+
+    def sync_model(self, new_order):
+        self._item.subject.ownedOperation.order(new_order.index)
+
+
+class ClassEnumerationLiterals(EditableTreeModel):
+    """GTK tree model to edit enumeration literals."""
+
+    def __init__(self, item):
+        super().__init__(item, cols=(str, object))
+
+    def get_rows(self):
+        for literal in self._item.subject.ownedLiteral:
+            yield [format(literal), literal]
+
+    def create_object(self):
+        literal = self._item.model.create(UML.EnumerationLiteral)
+        self._item.subject.ownedLiteral = literal
+        literal.enumeration = self._item.subject
+        return literal
+
+    @transactional
+    def set_object_value(self, row, col, value):
+        literal = row[-1]
+        if col == 0:
+            parse(literal, value)
+            row[0] = format(literal)
+        elif col == 1:
+            # Value in attribute object changed:
+            row[0] = format(literal)
+
+    def swap_objects(self, o1, o2):
+        return self._item.subject.ownedLiteral.swap(o1, o2)
+
+    def sync_model(self, new_order):
+        self._item.subject.ownedLiteral.order(new_order.index)
+
+
+def tree_view_column_tooltips(tree_view, tooltips):
+    assert tree_view.get_n_columns() == len(tooltips)
+
+    def on_query_tooltip(widget, x, y, keyboard_mode, tooltip):
+        path_and_more = widget.get_path_at_pos(x, y)
+        if path_and_more:
+            path, column, cx, cy = path_and_more
+            n = widget.get_columns().index(column)
+            if tooltips[n]:
+                tooltip.set_text(tooltips[n])
+                return True
+        return False
+
+    tree_view.connect("query-tooltip", on_query_tooltip)
 
 
 @PropertyPages.register(NamedElement)
@@ -134,7 +213,7 @@ class NamedElementPropertyPage(PropertyPageBase):
         entry.set_text(subject and subject.name or "")
 
         def handler(event):
-            if event.element is subject and event.new_value is not None:
+            if event.element is subject and event.new_value != entry.get_text():
                 entry.set_text(event.new_value)
 
         self.watcher.watch("name", handler)
@@ -210,6 +289,7 @@ class InterfacePropertyPage(PropertyPageBase):
         item.folded = Folded.PROVIDED if fold else Folded.NONE
 
 
+@PropertyPages.register(DataTypeItem)
 @PropertyPages.register(ClassItem)
 @PropertyPages.register(InterfaceItem)
 class AttributesPage(PropertyPageBase):
@@ -226,7 +306,7 @@ class AttributesPage(PropertyPageBase):
         if not self.item.subject:
             return
 
-        self.model = ClassAttributes(self.item, (str, bool, object))
+        self.model = ClassAttributes(self.item)
 
         builder = new_builder(
             "attributes-editor",
@@ -235,7 +315,6 @@ class AttributesPage(PropertyPageBase):
                 "attributes-name-edited": (on_text_cell_edited, self.model, 0),
                 "attributes-static-edited": (on_bool_cell_edited, self.model, 1),
                 "tree-view-destroy": (self.watcher.unsubscribe_all,),
-                "attributes-keypress": (on_keypress_event,),
             },
         )
         page = builder.get_object("attributes-editor")
@@ -245,6 +324,13 @@ class AttributesPage(PropertyPageBase):
 
         tree_view: Gtk.TreeView = builder.get_object("attributes-list")
         tree_view.set_model(self.model)
+        tree_view_column_tooltips(tree_view, ["", gettext("Static")])
+        if Gtk.get_major_version() == 3:
+            controller = self.key_controller = Gtk.EventControllerKey.new(tree_view)
+        else:
+            controller = Gtk.EventControllerKey.new()
+            tree_view.add_controller(controller)
+        controller.connect("key-pressed", on_keypress_event, tree_view)
 
         def handler(event):
             attribute = event.element
@@ -274,6 +360,7 @@ class AttributesPage(PropertyPageBase):
         self.item.request_update()
 
 
+@PropertyPages.register(DataTypeItem)
 @PropertyPages.register(ClassItem)
 @PropertyPages.register(InterfaceItem)
 class OperationsPage(PropertyPageBase):
@@ -290,7 +377,7 @@ class OperationsPage(PropertyPageBase):
         if not self.item.subject:
             return
 
-        self.model = ClassOperations(self.item, (str, bool, bool, object))
+        self.model = ClassOperations(self.item)
 
         builder = new_builder(
             "operations-editor",
@@ -300,7 +387,6 @@ class OperationsPage(PropertyPageBase):
                 "operations-abstract-edited": (on_bool_cell_edited, self.model, 1),
                 "operations-static-edited": (on_bool_cell_edited, self.model, 2),
                 "tree-view-destroy": (self.watcher.unsubscribe_all,),
-                "operations-keypress": (on_keypress_event,),
             },
         )
 
@@ -309,6 +395,15 @@ class OperationsPage(PropertyPageBase):
 
         tree_view: Gtk.TreeView = builder.get_object("operations-list")
         tree_view.set_model(self.model)
+        tree_view_column_tooltips(
+            tree_view, ["", gettext("Abstract"), gettext("Static")]
+        )
+        if Gtk.get_major_version() == 3:
+            controller = self.key_controller = Gtk.EventControllerKey.new(tree_view)
+        else:
+            controller = Gtk.EventControllerKey.new()
+            tree_view.add_controller(controller)
+        controller.connect("key-pressed", on_keypress_event, tree_view)
 
         def handler(event):
             operation = event.element
@@ -339,6 +434,60 @@ class OperationsPage(PropertyPageBase):
     def _on_show_operations_change(self, button, gparam):
         self.item.show_operations = button.get_active()
         self.item.request_update()
+
+
+@PropertyPages.register(EnumerationItem)
+class EnumerationPage(PropertyPageBase):
+    """An editor for enumeration literals for an enumeration."""
+
+    order = 20
+
+    def __init__(self, item):
+        super().__init__()
+        self.item = item
+        self.watcher = item.subject and item.subject.watcher()
+
+    def construct(self):
+        if not isinstance(self.item.subject, UML.Enumeration):
+            return
+
+        builder = new_builder("enumerations-editor")
+        page = builder.get_object("enumerations-editor")
+
+        show_enumerations = builder.get_object("show-enumerations")
+        show_enumerations.set_active(self.item.show_enumerations)
+
+        self.model = ClassEnumerationLiterals(self.item)
+
+        tree_view: Gtk.TreeView = builder.get_object("enumerations-list")
+        tree_view.set_model(self.model)
+
+        def handler(event):
+            enumeration = event.element
+            for row in self.model:
+                if row[-1] is enumeration:
+                    row[:] = [format(enumeration), enumeration]
+
+        self.watcher.watch("ownedLiteral.name", handler)
+
+        builder.connect_signals(
+            {
+                "show-enumerations-changed": (self._on_show_enumerations_change,),
+                "enumerations-name-edited": (on_text_cell_edited, self.model, 0),
+                "tree-view-destroy": (self.watcher.unsubscribe_all,),
+                "enumerations-keypress": (on_keypress_event,),
+            }
+        )
+        return page
+
+    @transactional
+    def _on_show_enumerations_change(self, button, gparam):
+        self.item.show_attributes = button.get_active()
+        self.item.request_update()
+
+
+PropertyPages.register(EnumerationItem)(AttributesPage)
+PropertyPages.register(EnumerationItem)(OperationsPage)
 
 
 @PropertyPages.register(DependencyItem)
@@ -417,7 +566,6 @@ def _dummy_handler(*args):
 
 @PropertyPages.register(AssociationItem)
 class AssociationPropertyPage(PropertyPageBase):
-    """"""
 
     NAVIGABILITY = (None, False, True)
     AGGREGATION = ("none", "shared", "composite")
@@ -465,7 +613,7 @@ class AssociationPropertyPage(PropertyPageBase):
             stereotype_list.set_model(stereotypes_model)
         else:
             stereotype_frame = builder.get_object(f"{end_name}-stereotype-frame")
-            stereotype_frame.destroy()
+            stereotype_frame.hide()
 
     def update_end_name(self, builder, end_name, subject):
         name = builder.get_object(f"{end_name}-name")
@@ -522,11 +670,9 @@ class AssociationPropertyPage(PropertyPageBase):
             self.update_end_name(builder, end_name, event.element)
 
         def restore_nav_handler(event):
-            prop = event.element
-            if prop.type and prop.opposite and prop.opposite.type:
-                for end_name, end in (("head", head), ("tail", tail)):
-                    combo = builder.get_object(f"{end_name}-navigation")
-                    self._on_end_navigability_change(combo, end)
+            for end_name, end in (("head", head), ("tail", tail)):
+                combo = builder.get_object(f"{end_name}-navigation")
+                self._on_end_navigability_change(combo, end)
 
         # Watch on association end:
         self.watcher.watch("memberEnd[Property].name", name_handler).watch(
@@ -560,6 +706,8 @@ class AssociationPropertyPage(PropertyPageBase):
         UML.model.set_navigability(
             end.subject.association, end.subject, self.NAVIGABILITY[combo.get_active()]
         )
+        # Call this again, or non-navigability will not be displayed
+        self.item.update_ends()
 
     @transactional
     def _on_end_aggregation_change(self, combo, end):

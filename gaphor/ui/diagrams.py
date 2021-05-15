@@ -60,7 +60,12 @@ class Diagrams(UIComponent, ActionProvider):
         self.event_manager.unsubscribe(self._on_close_diagram)
         self.event_manager.unsubscribe(self._on_show_diagram)
         if self._notebook:
-            self._notebook.destroy()
+            if Gtk.get_major_version() == 3:
+                self._notebook.destroy()
+            else:
+                parent = self._notebook.get_parent()
+                if parent:
+                    parent.remove(self._notebook)
             self._notebook = None
 
     def get_current_diagram(self):
@@ -110,28 +115,33 @@ class Diagrams(UIComponent, ActionProvider):
 
     def tab_label(self, title, widget):
         tab_box = Gtk.Box.new(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        label = Gtk.Label.new(title)
-        tab_box.pack_start(child=label, expand=True, fill=True, padding=0)
-
-        close_image = Gtk.Image.new_from_icon_name(
-            icon_name="window-close", size=Gtk.IconSize.BUTTON
-        )
         button = Gtk.Button()
         button.get_style_context().add_class("flat")
+        button.set_focus_on_click(False)
 
-        # TODO: Call button.set_focus_on_click directly once PyGObject issue
-        #  #371 is fixed
-        Gtk.Widget.set_focus_on_click(button, False)
-
-        button.add(close_image)
         button.connect(
             "clicked",
             lambda _button: self.event_manager.handle(
                 DiagramClosed(widget.diagram_page.get_diagram())
             ),
         )
-        tab_box.pack_start(child=button, expand=False, fill=False, padding=0)
-        tab_box.show_all()
+
+        label = Gtk.Label.new(title)
+        if Gtk.get_major_version() == 3:
+            tab_box.pack_start(child=label, expand=True, fill=True, padding=0)
+            close_image = Gtk.Image.new_from_icon_name(
+                icon_name="window-close", size=Gtk.IconSize.BUTTON
+            )
+            button.add(close_image)
+            tab_box.pack_start(child=button, expand=False, fill=False, padding=0)
+            tab_box.show_all()
+        else:
+            tab_box.append(label)
+            close_image = Gtk.Image.new_from_icon_name("window-close")
+            button.set_child(close_image)
+            tab_box.append(button)
+            tab_box.show()
+
         return tab_box
 
     def get_widgets_on_pages(self):
@@ -173,6 +183,8 @@ class Diagrams(UIComponent, ActionProvider):
     def _on_page_changed(self, notebook, _page, _page_num):
         def diagram_ids():
             notebook = self._notebook
+            if not notebook:
+                return
             for page_num in range(notebook.get_n_pages()):
                 page = notebook.get_nth_page(page_num)
                 if page:
@@ -184,14 +196,24 @@ class Diagrams(UIComponent, ActionProvider):
         log.debug(f"pages changed: {self.properties.get('opened-diagrams')}")
 
     def _add_ui_settings(self, page):
-        window = page.get_toplevel()
-        window.insert_action_group("diagram", page.action_group.actions)
-        window.add_accel_group(page.action_group.shortcuts)
+        if Gtk.get_major_version() == 3:
+            window = page.get_toplevel()
+            window.insert_action_group("diagram", page.action_group.actions)
+            window.add_accel_group(page.action_group.shortcuts)
+        else:
+            window = page.get_root()
+            print("adding", page.action_group.actions)
+            window.insert_action_group("diagram", page.action_group.actions)
+            print("done", page.action_group.actions)
 
     def _clear_ui_settings(self, page):
-        window = page.get_toplevel()
-        window.insert_action_group("diagram", None)
-        window.remove_accel_group(page.action_group.shortcuts)
+        if Gtk.get_major_version() == 3:
+            window = page.get_toplevel()
+            window.insert_action_group("diagram", None)
+            window.remove_accel_group(page.action_group.shortcuts)
+        else:
+            window = page.get_root()
+            window.insert_action_group("diagram", None)
 
     @action(name="close-current-tab", shortcut="<Primary>w")
     def close_current_tab(self):
@@ -250,7 +272,8 @@ class Diagrams(UIComponent, ActionProvider):
             self._clear_ui_settings(widget)
         self._notebook.remove_page(page_num)
         widget.diagram_page.close()
-        widget.destroy()
+        if Gtk.get_major_version() == 3:
+            widget.destroy()
 
     @event_handler(ModelFlushed)
     def _on_flush_model(self, event):

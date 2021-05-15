@@ -40,9 +40,13 @@ class RecentFilesMenu(Gio.Menu):
 
         self._on_recent_manager_changed(recent_manager)
         # TODO: should unregister if the window is closed.
-        self._changed_id = recent_manager.connect(
-            "changed", self._on_recent_manager_changed
-        )
+        if Gtk.get_major_version() == 3:
+            self._changed_id = recent_manager.connect(
+                "changed", self._on_recent_manager_changed
+            )
+        else:
+            # TODO: GTK4 - Why is updating the recent files so slow?
+            pass
 
     def _on_recent_manager_changed(self, recent_manager):
         self.remove_all()

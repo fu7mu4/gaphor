@@ -28,25 +28,23 @@ class HelpService(Service, ActionProvider):
     def about(self):
         builder = Gtk.Builder()
         with importlib.resources.path(
-            "gaphor.services.helpservice", "about.glade"
+            "gaphor.services.helpservice", "about.ui"
         ) as glade_file:
             builder.add_objects_from_file(str(glade_file), ("about",))
 
         about = builder.get_object("about")
 
         about.set_version(importlib_metadata.version("gaphor"))
-
+        about.set_modal(True)
         about.set_transient_for(self.window)
 
-        about.show_all()
-        about.run()
-        about.destroy()
+        about.show()
 
     @action(name="app.shortcuts")
     def shortcuts(self):
         builder = Gtk.Builder()
         with importlib.resources.path(
-            "gaphor.services.helpservice", "shortcuts.glade"
+            "gaphor.services.helpservice", "shortcuts.ui"
         ) as glade_file:
             builder.add_objects_from_file(str(glade_file), ("shortcuts-gaphor",))
 
@@ -54,5 +52,5 @@ class HelpService(Service, ActionProvider):
         shortcuts.set_modal(True)
         shortcuts.set_transient_for(self.window)
 
-        shortcuts.show_all()
+        shortcuts.show()
         return shortcuts

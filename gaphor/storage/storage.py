@@ -398,7 +398,6 @@ def upgrade_message_item_to_1_1_0(canvasitems):
             for m_id in inverted:
                 new_item = clone_canvasitem(item, m_id)
                 new_canvasitems.append(new_item)
-                # todo: invert handles, points will follow on connect
                 (
                     new_item.references["head-connection"],
                     new_item.references["tail-connection"],
@@ -457,7 +456,7 @@ def upgrade_feature_parameters_to_owned_parameter(elem):
         if name == "formalParameter":
             formal_params = refids
             del elem.references["formalParameter"]
-        if name == "returnResult":
+        elif name == "returnResult":
             return_results = refids
             del elem.references["returnResult"]
     elem.references["ownedParameter"] = formal_params + return_results

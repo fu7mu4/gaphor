@@ -37,37 +37,74 @@ def placement_icon_base():
 
 GtkView.set_css_name("diagramview")
 
-_placement_pixbuf_map: Dict[str, GdkPixbuf.Pixbuf] = {}
+
+if Gtk.get_major_version() == 3:
+    _placement_pixbuf_map: Dict[str, GdkPixbuf.Pixbuf] = {}
+
+    def get_placement_cursor(display, icon_name):
+        if icon_name in _placement_pixbuf_map:
+            pixbuf = _placement_pixbuf_map[icon_name]
+        else:
+            pixbuf = placement_icon_base().copy()
+            icon = Gtk.IconTheme.get_default().load_icon(icon_name, 24, 0)
+            icon.copy_area(
+                0,
+                0,
+                icon.get_width(),
+                icon.get_height(),
+                pixbuf,
+                9,
+                15,
+            )
+            _placement_pixbuf_map[icon_name] = pixbuf
+        return Gdk.Cursor.new_from_pixbuf(display, pixbuf, 1, 1)
 
 
-def get_placement_cursor(display, icon_name):
-    if icon_name in _placement_pixbuf_map:
-        pixbuf = _placement_pixbuf_map[icon_name]
-    else:
-        pixbuf = placement_icon_base().copy()
-        icon = Gtk.IconTheme.get_default().load_icon(icon_name, 24, 0)
-        icon.copy_area(
-            0,
-            0,
-            icon.get_width(),
-            icon.get_height(),
-            pixbuf,
-            9,
-            15,
-        )
-        _placement_pixbuf_map[icon_name] = pixbuf
-    return Gdk.Cursor.new_from_pixbuf(display, pixbuf, 1, 1)
+else:
+    _placement_texture_map: Dict[str, Gdk.Texture] = {}
+
+    def get_placement_cursor(display, icon_name):
+        if display is None:
+            display = Gdk.Display.get_default()
+        if icon_name in _placement_texture_map:
+            texture = _placement_texture_map[icon_name]
+        else:
+            pixbuf = placement_icon_base().copy()
+            theme_icon = Gtk.IconTheme.get_for_display(display).lookup_icon(
+                icon_name,
+                None,
+                24,
+                1,
+                Gtk.TextDirection.NONE,
+                Gtk.IconLookupFlags.FORCE_SYMBOLIC,
+            )
+            icon = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                theme_icon.get_file().get_path(), 32, 32, True
+            )
+            icon.copy_area(
+                0,
+                0,
+                icon.get_width(),
+                icon.get_height(),
+                pixbuf,
+                9,
+                15,
+            )
+            texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+            _placement_texture_map[icon_name] = texture
+        return Gdk.Cursor.new_from_texture(texture, 1, 1)
 
 
 class DiagramPage:
 
-    VIEW_TARGET_STRING = 0
-    VIEW_TARGET_ELEMENT_ID = 1
-    VIEW_TARGET_TOOLBOX_ACTION = 2
-    VIEW_DND_TARGETS = [
-        Gtk.TargetEntry.new("gaphor/element-id", 0, VIEW_TARGET_ELEMENT_ID),
-        Gtk.TargetEntry.new("gaphor/toolbox-action", 0, VIEW_TARGET_TOOLBOX_ACTION),
-    ]
+    if Gtk.get_major_version() == 3:
+        VIEW_TARGET_STRING = 0
+        VIEW_TARGET_ELEMENT_ID = 1
+        VIEW_TARGET_TOOLBOX_ACTION = 2
+        VIEW_DND_TARGETS = [
+            Gtk.TargetEntry.new("gaphor/element-id", 0, VIEW_TARGET_ELEMENT_ID),
+            Gtk.TargetEntry.new("gaphor/toolbox-action", 0, VIEW_TARGET_TOOLBOX_ACTION),
+        ]
 
     def __init__(
         self, diagram, event_manager, element_factory, properties, modeling_language
@@ -104,11 +141,16 @@ class DiagramPage:
         assert self.diagram
 
         view = GtkView(selection=Selection())
-        view.drag_dest_set(
-            Gtk.DestDefaults.ALL,
-            DiagramPage.VIEW_DND_TARGETS,
-            Gdk.DragAction.MOVE | Gdk.DragAction.COPY | Gdk.DragAction.LINK,
-        )
+        if Gtk.get_major_version() == 3:
+            view.drag_dest_set(
+                Gtk.DestDefaults.ALL,
+                DiagramPage.VIEW_DND_TARGETS,
+                Gdk.DragAction.MOVE | Gdk.DragAction.COPY | Gdk.DragAction.LINK,
+            )
+        else:
+            # TODO: Gtk4 - use controllers DragSource and DropTarget
+            pass
+
         self.diagram_css = Gtk.CssProvider.new()
         view.get_style_context().add_provider(
             self.diagram_css, Gtk.STYLE_PROVIDER_PRIORITY_USER
@@ -116,16 +158,23 @@ class DiagramPage:
 
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled_window.add(view)
-        scrolled_window.show_all()
-        self.widget = scrolled_window
+        if Gtk.get_major_version() == 3:
+            scrolled_window.add(view)
+            scrolled_window.show_all()
+            view.connect("drag-data-received", self._on_drag_data_received)
+            scrolled_window.action_group = create_action_group(self, "diagram")
+        else:
+            scrolled_window.set_child(view)
+            scrolled_window.action_group = create_action_group(self, "diagram")
+            _, shortcuts = scrolled_window.action_group
+            ctrl = Gtk.ShortcutController.new_for_model(shortcuts)
+            ctrl.set_scope(Gtk.ShortcutScope.LOCAL)
+            scrolled_window.add_controller(ctrl)
 
         view.selection.add_handler(self._on_view_selection_changed)
-        view.connect("drag-data-received", self._on_drag_data_received)
 
         self.view = view
-
-        self.widget.action_group = create_action_group(self, "diagram")
+        self.widget = scrolled_window
 
         self.select_tool("toolbox-pointer")
 
@@ -193,7 +242,13 @@ class DiagramPage:
         Do the same thing that would be done if Close was pressed.
         """
         assert self.widget
-        self.widget.destroy()
+        if Gtk.get_major_version() == 3:
+            self.widget.destroy()
+        else:
+            parent = self.widget.get_parent()
+            if parent:
+                parent.remove(self.widget)
+
         self.event_manager.unsubscribe(self._on_element_delete)
         self.event_manager.unsubscribe(self._on_style_sheet_updated)
         self.event_manager.unsubscribe(self._on_diagram_item_placed)
@@ -244,19 +299,33 @@ class DiagramPage:
         if self.view:
             self.apply_tool_set(tool_name)
             icon_name = self.get_tool_icon_name(tool_name)
-            window = self.view.get_window()
-            if icon_name and window:
-                window.set_cursor(get_placement_cursor(window.get_display(), icon_name))
-            elif window:
-                window.set_cursor(None)
+            if Gtk.get_major_version() == 3:
+                window = self.view.get_window()
+                if icon_name and window:
+                    window.set_cursor(
+                        get_placement_cursor(window.get_display(), icon_name)
+                    )
+                elif window:
+                    window.set_cursor(None)
+            else:
+                if icon_name:
+                    self.view.set_cursor(get_placement_cursor(None, icon_name))
+                else:
+                    self.view.set_cursor(None)
 
     @event_handler(DiagramItemPlaced)
     def _on_diagram_item_placed(self, event):
-        assert self.widget
         if self.properties.get("reset-tool-after-create", True):
-            self.widget.action_group.actions.lookup_action("select-tool").activate(
-                GLib.Variant.new_string("toolbox-pointer")
-            )
+            assert self.widget
+            if Gtk.get_major_version() == 3:
+                self.widget.action_group.actions.lookup_action("select-tool").activate(
+                    GLib.Variant.new_string("toolbox-pointer")
+                )
+            else:
+                assert self.view
+                self.view.activate_action(
+                    "diagram.select-tool", GLib.Variant.new_string("toolbox-pointer")
+                )
 
     def set_drawing_style(self):
         """Set the drawing style for the diagram based on the active style
@@ -268,7 +337,7 @@ class DiagramPage:
 
         bg = style.get("background-color")
         self.diagram_css.load_from_data(
-            f"diagramview {{ background-color: rgba({int(255*bg[0])}, {int(255*bg[1])}, {int(255*bg[2])}, {bg[3]}) }}".encode()
+            f"diagramview {{ background-color: rgba({int(255*bg[0])}, {int(255*bg[1])}, {int(255*bg[2])}, {bg[3]}); }}".encode()
             if bg
             else "".encode()
         )

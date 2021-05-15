@@ -8,7 +8,10 @@ from gaphor.core.modeling import Presentation
 
 
 def shortcut_tool(view, modeling_language, event_manager):
-    ctrl = Gtk.EventControllerKey.new(view)
+    if Gtk.get_major_version() == 3:
+        ctrl = Gtk.EventControllerKey.new(view)
+    else:
+        ctrl = Gtk.EventControllerKey.new()
     ctrl.connect("key-pressed", on_delete, event_manager)
     ctrl.connect("key-pressed", on_shortcut, modeling_language)
     return ctrl
@@ -50,9 +53,14 @@ def on_shortcut(ctrl, keyval, keycode, state, modeling_language):
                 continue
             keys, mod = parse_shortcut(shortcut)
             if state == mod and keyval in keys:
-                view.get_toplevel().get_action_group("diagram").lookup_action(
-                    "select-tool"
-                ).change_state(GLib.Variant.new_string(action_name))
+                if Gtk.get_major_version() == 3:
+                    view.get_toplevel().get_action_group("diagram").lookup_action(
+                        "select-tool"
+                    ).change_state(GLib.Variant.new_string(action_name))
+                else:
+                    view.activate_action(
+                        "diagram.select-tool", GLib.Variant.new_string(action_name)
+                    )
                 return True
     return False
 
@@ -62,5 +70,8 @@ _upper_offset = ord("A") - ord("a")
 
 @functools.lru_cache(maxsize=None)
 def parse_shortcut(shortcut):
-    key, mod = Gtk.accelerator_parse(shortcut)
+    if Gtk.get_major_version() == 3:
+        key, mod = Gtk.accelerator_parse(shortcut)
+    else:
+        _, key, mod = Gtk.accelerator_parse(shortcut)
     return (key, key + _upper_offset), mod

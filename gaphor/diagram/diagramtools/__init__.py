@@ -1,5 +1,4 @@
 """Tools for handling items on a diagram."""
-
 from gaphas.segment import segment_tool
 from gaphas.tool import (
     hover_tool,
